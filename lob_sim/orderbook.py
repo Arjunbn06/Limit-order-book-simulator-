@@ -14,11 +14,6 @@ from dataclasses import dataclass, field
 from itertools import count
 from sortedcontainers import SortedDict
 
-# Monotonically increasing order IDs, also used to break ties for
-# debugging/logging (NOT for matching priority — that's handled by
-# the deque's FIFO ordering itself, which is separate from the ID).
-_id_counter = count(1)
-
 
 @dataclass
 class Order:
@@ -46,6 +41,11 @@ class OrderBook:
     def __init__(self):
         self.bids = SortedDict()   # price -> deque[Order]
         self.asks = SortedDict()   # price -> deque[Order]
+        # Order IDs are scoped to THIS book, not shared globally — each
+        # OrderBook owns its own id sequence. Also used to break ties for
+        # debugging/logging (NOT for matching priority — that's handled
+        # by the deque's FIFO ordering itself, separate from the ID).
+        self._id_counter = count(1)
 
     # ---- basic top-of-book queries -------------------------------
 
@@ -88,7 +88,7 @@ class OrderBook:
         not decide when they trade.
         """
         order = Order(
-            order_id=next(_id_counter),
+            order_id=next(self._id_counter),
             side=side,
             price=price,
             quantity=quantity,

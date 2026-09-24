@@ -27,11 +27,12 @@ This is an active, in-progress build. Current state:
 
 - [x] Core order book data structure (`orderbook.py`) — price levels, FIFO
       queues per level, best bid/ask, spread, mid-price
-- [ ] Matching engine — crossing logic for limit/market orders, partial fills
+- [x] Matching engine (`matching_engine.py`) — crossing logic for limit/market
+      orders, multi-level sweeps, partial fills
+- [x] Unit tests for the matching engine (7 tests, `tests/test_matching_engine.py`)
 - [ ] Order flow simulation — Poisson arrivals for limit/market orders/cancels
 - [ ] Avellaneda-Stoikov market-making strategy
 - [ ] Performance metrics — P&L, inventory over time, spread captured, fill rate
-- [ ] Unit tests for the matching engine
 - [ ] Results / plots
 
 ## Model overview
@@ -40,6 +41,17 @@ This is an active, in-progress build. Current state:
 with orders at the same price level served in arrival order (price-time
 priority). The book only stores *resting* intent to trade; a trade only
 happens when an incoming order crosses the spread.
+
+**Matching engine.** Kept deliberately separate from the order book itself:
+the book only knows how to store orders, the engine decides how an incoming
+order trades against them. An incoming order crosses the spread when a buy's
+price is at or above the best ask (or a sell's price is at or below the best
+bid); market orders always cross, at whatever price is available. On a
+cross, the engine walks the opposite side from best price to worst, and
+within each price level from front to back (time priority), consuming
+resting orders until either the incoming order is filled or it stops
+crossing. Leftover quantity on a limit order rests in the book; leftover
+quantity on a market order is simply lost (market orders never rest).
 
 **Avellaneda-Stoikov, in brief.** The model gives the market maker a
 reservation price
@@ -60,13 +72,14 @@ arrival intensity, balancing spread capture against inventory risk.
 
 ```
 lob_sim/
-    orderbook.py     # core LOB data structure
-    simulator.py      # matching engine + order flow simulation  [pending]
-    strategy.py        # Avellaneda-Stoikov market maker          [pending]
-    metrics.py          # P&L, inventory, fill-rate tracking       [pending]
+    orderbook.py         # core LOB data structure
+    matching_engine.py    # crossing / fill logic
+    simulator.py            # order flow simulation (Poisson arrivals)  [pending]
+    strategy.py               # Avellaneda-Stoikov market maker          [pending]
+    metrics.py                  # P&L, inventory, fill-rate tracking       [pending]
 tests/
-    test_orderbook.py                                              [pending]
-    test_matching_engine.py                                        [pending]
+    test_matching_engine.py   # 7 tests: partial fills, multi-level sweeps,
+                                # time priority, market orders, cancels
 ```
 
 ## Running it
