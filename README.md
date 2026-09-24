@@ -30,7 +30,8 @@ This is an active, in-progress build. Current state:
 - [x] Matching engine (`matching_engine.py`) — crossing logic for limit/market
       orders, multi-level sweeps, partial fills
 - [x] Unit tests for the matching engine (7 tests, `tests/test_matching_engine.py`)
-- [ ] Order flow simulation — Poisson arrivals for limit/market orders/cancels
+- [x] Order flow simulation (`simulator.py`) — Poisson-driven limit/market
+      orders and cancellations, via superposition of Poisson processes
 - [ ] Avellaneda-Stoikov market-making strategy
 - [ ] Performance metrics — P&L, inventory over time, spread captured, fill rate
 - [ ] Results / plots
@@ -53,6 +54,17 @@ resting orders until either the incoming order is filled or it stops
 crossing. Leftover quantity on a limit order rests in the book; leftover
 quantity on a market order is simply lost (market orders never rest).
 
+**Order flow.** Synthetic "noise trader" activity — limit orders, market
+orders, and cancellations — is generated using independent Poisson
+processes, one per event type. Rather than simulating five separate clocks,
+we use the *superposition* property of Poisson processes: the sum of
+independent Poisson processes is itself Poisson at the combined rate, and
+conditional on an event firing, its type is chosen randomly with probability
+proportional to each type's own rate. Limit order prices are placed a random
+(exponentially distributed) distance from the current mid-price, so most
+orders land close to the touch with an occasional order landing further out
+— giving the book realistic depth and a fat queue tail.
+
 **Avellaneda-Stoikov, in brief.** The model gives the market maker a
 reservation price
 
@@ -74,7 +86,7 @@ arrival intensity, balancing spread capture against inventory risk.
 lob_sim/
     orderbook.py         # core LOB data structure
     matching_engine.py    # crossing / fill logic
-    simulator.py            # order flow simulation (Poisson arrivals)  [pending]
+    simulator.py            # order flow simulation (Poisson arrivals)
     strategy.py               # Avellaneda-Stoikov market maker          [pending]
     metrics.py                  # P&L, inventory, fill-rate tracking       [pending]
 tests/
