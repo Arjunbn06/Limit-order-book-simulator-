@@ -32,9 +32,12 @@ This is an active, in-progress build. Current state:
 - [x] Unit tests for the matching engine (7 tests, `tests/test_matching_engine.py`)
 - [x] Order flow simulation (`simulator.py`) — Poisson-driven limit/market
       orders and cancellations, via superposition of Poisson processes
-- [ ] Avellaneda-Stoikov market-making strategy
-- [ ] Performance metrics — P&L, inventory over time, spread captured, fill rate
-- [ ] Results / plots
+- [x] Avellaneda-Stoikov market-making strategy (`strategy.py`) +
+      backtest runner (`backtest.py`)
+- [ ] Dedicated metrics module — P&L/inventory/fill-rate currently tracked
+      inline in `strategy.py`; a `metrics.py` with spread-captured and
+      fill-rate analysis is still pending
+- [ ] Results / plots in this README (currently only produced ad hoc)
 
 ## Model overview
 
@@ -65,6 +68,23 @@ proportional to each type's own rate. Limit order prices are placed a random
 orders land close to the touch with an occasional order landing further out
 — giving the book realistic depth and a fat queue tail.
 
+**Strategy (Avellaneda-Stoikov).** The market maker tracks its own inventory
+`q` and cash, and periodically re-quotes a bid and ask around a *reservation
+price* `r = s - q * gamma * sigma^2 * (T - t)`, where `s` is the current
+mid-price and `(T - t)` is the fraction of the trading session remaining
+(normalized to `[0, T]`, independent of how many real seconds the
+simulation runs for). Positive (long) inventory pulls `r` below mid,
+encouraging fills on the ask; negative (short) inventory pulls it above mid,
+encouraging fills on the bid. The quoted half-spread around `r` widens with
+risk aversion (`gamma`), volatility (`sigma`), and time remaining, with a
+floor set by `k` (how readily orders arrive at a given distance from `r`).
+**Calibration note:** these parameters must be scaled to the specific
+simulated market's tick size and natural spread — textbook parameter values
+produced a multi-dollar spread against a market that naturally trades at a
+one-cent spread, resulting in almost no fills. `gamma`, `sigma`, and `k` were
+retuned so the model's quoted spread sits close to the market's natural
+spread, restoring realistic quoting/fill behavior.
+
 **Avellaneda-Stoikov, in brief.** The model gives the market maker a
 reservation price
 
@@ -87,8 +107,9 @@ lob_sim/
     orderbook.py         # core LOB data structure
     matching_engine.py    # crossing / fill logic
     simulator.py            # order flow simulation (Poisson arrivals)
-    strategy.py               # Avellaneda-Stoikov market maker          [pending]
-    metrics.py                  # P&L, inventory, fill-rate tracking       [pending]
+    strategy.py               # Avellaneda-Stoikov market maker
+    backtest.py                 # wires simulator + strategy together
+    metrics.py                    # dedicated P&L/fill-rate analysis          [pending]
 tests/
     test_matching_engine.py   # 7 tests: partial fills, multi-level sweeps,
                                 # time priority, market orders, cancels

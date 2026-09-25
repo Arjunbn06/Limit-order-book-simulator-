@@ -33,6 +33,9 @@ class OrderFlowSimulator:
         market_order_size_range=(5, 50),
         price_offset_mean_ticks=5,   # avg distance of limit orders from mid
         seed=None,
+        on_fill=None,   # optional callback(fill) — called for every fill this
+                         # noise flow produces, including fills that happen to
+                         # land against a market maker's resting quotes
     ):
         self.engine = engine
         self.book = engine.book
@@ -52,6 +55,7 @@ class OrderFlowSimulator:
         self.rng = random.Random(seed)
         self.time = 0.0
         self.history = []  # (time, mid_price_or_None) after each event
+        self.on_fill = on_fill
 
     # ---- public API ---------------------------------------------------
 
@@ -106,11 +110,18 @@ class OrderFlowSimulator:
         price = round(raw_price / self.tick_size) * self.tick_size
 
         qty = self.rng.randint(*self.limit_order_size_range)
-        self.engine.process_limit_order(side, price, qty, timestamp=self.time)
+        fills, _ = self.engine.process_limit_order(side, price, qty, timestamp=self.time)
+        self._notify_fills(fills)
 
     def _submit_market(self, side):
         qty = self.rng.randint(*self.market_order_size_range)
-        self.engine.process_market_order(side, qty)
+        fills, _ = self.engine.process_market_order(side, qty)
+        self._notify_fills(fills)
+
+    def _notify_fills(self, fills):
+        if self.on_fill is not None:
+            for f in fills:
+                self.on_fill(f)
 
     def _submit_cancel(self):
         # Pick a uniformly random resting order and cancel it.
