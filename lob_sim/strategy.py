@@ -37,9 +37,18 @@ class AvellanedaStoikovStrategy:
 
         self.active_bid = None   # Order object currently resting, or None
         self.active_ask = None
+        self._last_t = 0.0        # most recent requote time, used to timestamp
+                                    # fills that arrive between requotes (on_fill)
 
         # history for later analysis/plots: (time, inventory, cash, mtm_pnl)
         self.history = []
+
+        # every individual fill, WITH the mid-price at the moment of the
+        # fill -- this is what lets metrics.py compute "spread captured"
+        # (edge earned vs. fair value at the time of the trade) instead of
+        # just end-of-run mark-to-market P&L, which is also contaminated
+        # by whatever the mid-price happened to do afterward.
+        self.fills = []
 
     # ---- Avellaneda-Stoikov formulas -----------------------------------
 
@@ -92,20 +101,30 @@ class AvellanedaStoikovStrategy:
     def requote(self, mid_price, t):
         """Cancel old quotes (if any) and place fresh bid/ask around the
         current reservation price."""
+        self._last_t = t
         self.cancel_existing_quotes()
         bid_price, ask_price = self.quote_prices(mid_price, t)
 
+        # mid_price here is the reference BEFORE our own quotes can touch
+        # the book -- correct reference for spread-captured accounting.
+        # Fills here happen because OUR OWN order crossed the spread the
+        # instant it was placed (large inventory skew can push our quote
+        # past the touch). This is a deliberate "taker"/urgency trade to
+        # unwind risk, economically different from a passive fill -- it's
+        # EXPECTED to show negative edge vs. mid, that's the price of
+        # rebalancing quickly. Tagged "aggressive" so metrics.py doesn't
+        # conflate it with genuine passive spread capture.
         bid_fills, bid_order = self.engine.process_limit_order(
             "buy", bid_price, self.quote_size, timestamp=t
         )
         for f in bid_fills:
-            self._apply_fill(f, side="buy")
+            self._apply_fill(f, side="buy", mid_hint=mid_price, origin="aggressive")
 
         ask_fills, ask_order = self.engine.process_limit_order(
             "sell", ask_price, self.quote_size, timestamp=t
         )
         for f in ask_fills:
-            self._apply_fill(f, side="sell")
+            self._apply_fill(f, side="sell", mid_hint=mid_price, origin="aggressive")
 
         # Only keep a reference if quantity actually remains resting
         # (an order that fully crossed on placement won't be in the book).
@@ -116,22 +135,42 @@ class AvellanedaStoikovStrategy:
 
     # ---- fill handling ----------------------------------------------------
 
-    def on_fill(self, fill):
+    def on_fill(self, fill, pre_trade_mid=None):
         """Callback for fills produced by OTHER participants' orders that
-        happen to land against our resting quotes."""
+        happen to land against our resting quotes -- we are PASSIVE here
+        (we provided liquidity, they crossed to hit us). `pre_trade_mid`
+        is the mid-price BEFORE that incoming order touched the book --
+        the correct reference for spread-captured accounting."""
         if self.active_bid is not None and fill.resting_order_id == self.active_bid.order_id:
-            self._apply_fill(fill, side="buy")
+            self._apply_fill(fill, side="buy", mid_hint=pre_trade_mid, origin="passive")
         elif self.active_ask is not None and fill.resting_order_id == self.active_ask.order_id:
-            self._apply_fill(fill, side="sell")
+            self._apply_fill(fill, side="sell", mid_hint=pre_trade_mid, origin="passive")
 
-    def _apply_fill(self, fill, side):
-        """We got filled on `side` at fill.price for fill.quantity."""
+    def _apply_fill(self, fill, side, mid_hint=None, origin="passive"):
+        """We got filled on `side` at fill.price for fill.quantity.
+        `mid_hint` should be the mid-price BEFORE this trade's own impact
+        on the book; falls back to the current (post-trade) mid only if
+        no hint was available (rare: book was one-sided pre-trade).
+        `origin` is "passive" (we provided liquidity, a genuine spread-
+        capture fill) or "aggressive" (our own quote crossed the spread
+        immediately on placement -- an inventory-unwind/urgency trade,
+        expected to cost money vs. mid by design)."""
         if side == "buy":
             self.inventory += fill.quantity
             self.cash -= fill.price * fill.quantity
         else:
             self.inventory -= fill.quantity
             self.cash += fill.price * fill.quantity
+
+        mid = mid_hint if mid_hint is not None else self.book.mid_price()
+        self.fills.append({
+            "time": self._last_t,
+            "side": side,
+            "price": fill.price,
+            "quantity": fill.quantity,
+            "mid_at_fill": mid,
+            "origin": origin,
+        })
 
     # ---- bookkeeping ----------------------------------------------------
 

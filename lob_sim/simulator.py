@@ -109,19 +109,24 @@ class OrderFlowSimulator:
         raw_price = (ref_price - offset) if side == "buy" else (ref_price + offset)
         price = round(raw_price / self.tick_size) * self.tick_size
 
+        # Capture mid-price BEFORE this order can change the book -- so
+        # any resulting fill is measured against a reference price our
+        # own trade hasn't touched yet (see note in metrics.py).
+        pre_trade_mid = self.book.mid_price()
         qty = self.rng.randint(*self.limit_order_size_range)
         fills, _ = self.engine.process_limit_order(side, price, qty, timestamp=self.time)
-        self._notify_fills(fills)
+        self._notify_fills(fills, pre_trade_mid)
 
     def _submit_market(self, side):
+        pre_trade_mid = self.book.mid_price()
         qty = self.rng.randint(*self.market_order_size_range)
         fills, _ = self.engine.process_market_order(side, qty)
-        self._notify_fills(fills)
+        self._notify_fills(fills, pre_trade_mid)
 
-    def _notify_fills(self, fills):
+    def _notify_fills(self, fills, pre_trade_mid):
         if self.on_fill is not None:
             for f in fills:
-                self.on_fill(f)
+                self.on_fill(f, pre_trade_mid)
 
     def _submit_cancel(self):
         # Pick a uniformly random resting order and cancel it.
